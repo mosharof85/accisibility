@@ -1,0 +1,36 @@
+<?php
+
+add_action('template_include', function ($template) {
+    if (is_admin() || wp_doing_ajax() || wp_doing_cron()) {
+        return $template;
+    }
+
+    static $buffer_started = false;
+    if ($buffer_started) {
+        return $template;
+    }
+    $buffer_started = true;
+
+    ob_start(function ($html) {
+        return modify_buffer($html);
+    });
+
+    return $template;
+}, 1);
+
+add_action('shutdown', function () {
+    while (ob_get_level() > 0) {
+        @ob_end_flush();
+    }
+}, 9999);
+
+function modify_buffer($html){
+    $dom = new DOMDocument();
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
+    $xpath = new DOMXPath($dom);
+
+
+    return $dom->saveHTML();
+}
