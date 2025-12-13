@@ -1,0 +1,133 @@
+$styles_to_insert = [];
+
+    $links = $xpath->query(
+        "//link[@id='main-styles-css' or @id='dynamic-css-css' or @id='salient-child-style-css']"
+    );
+
+    foreach ($links as $link) {
+        $href = $link->getAttribute('href');
+        $css = file_get_contents($href);
+        if (!$css) continue;
+
+        $inline_css = atai_generate_font_classes_css($css);
+        if (!empty($inline_css)) {
+            $styles_to_insert[] = $inline_css;
+        }
+    }
+
+    $head = $dom->getElementsByTagName('head')->item(0);
+
+    if ($head) {
+        foreach ($styles_to_insert as $css) {
+            $style = $dom->createElement('style', "\n" . $css . "\n");
+            $style->setAttribute('id', 'font-inline-' . uniqid());
+            $head->appendChild($style);
+        }
+            }
+          
+function atai_generate_font_classes_css($css) {
+
+    if (!$css) return '';
+
+    $out = '';
+
+    $process_block = function($content) use (&$process_block, &$out) {
+
+        $content = trim($content);
+
+        // Match all selectors inside this block
+        preg_match_all('/([^{}]+)\{([^{}]*)\}/s', $content, $blocks, PREG_SET_ORDER);
+
+        foreach ($blocks as $block) {
+
+            $selectors = trim($block[1]);
+            $rules     = trim($block[2]);
+
+            $parts = array_map('trim', explode(',', $selectors));
+            $newParts = [];
+
+            foreach ($parts as $sel) {
+
+                if (preg_match('/\bh([3-6])(\.[a-z0-9\-_\.]+)?\b/i', $sel, $mm)) {
+
+                    $level = $mm[1];
+
+                    $fontSelector = preg_replace(
+                        '/\bh' . $level . '(\.[a-z0-9\-_\.]+)?\b/i',
+                        '.h' . $level . '-font$1',
+                        $sel
+                    );
+
+                    $newParts[] = $fontSelector;
+                }
+            }
+
+            if (!empty($newParts)) {
+                $out .= implode(', ', $newParts) . " {\n" . $rules . "\n}\n\n";
+            }
+        }
+    };
+
+    /*
+     * 🔥 FIX: remove media queries BEFORE top-level processing
+     */
+    $css_no_media = preg_replace(
+        '/@media[^{]+\{([^{}]|{[^{}]*})*\}/s',
+        '',
+        $css
+    );
+
+    // Top-level processing (NO media here)
+    $process_block($css_no_media);
+
+    // Process @media queries separately (ONCE)
+    preg_match_all('/@media[^{]+\{([^{}]|{[^{}]*})*\}/s', $css, $media_blocks);
+
+    foreach ($media_blocks[0] as $mq) {
+
+        $out .= preg_replace('/\{.*/s', '', $mq) . " {\n";
+
+        // Extract inner content
+        $inner = preg_replace('/^[^{]+\{(.*)\}$/s', '$1', $mq);
+
+        $temp = '';
+        $inner_processor = function($content) use (&$temp) {
+
+            preg_match_all('/([^{}]+)\{([^{}]*)\}/s', $content, $blocks, PREG_SET_ORDER);
+
+            foreach ($blocks as $block) {
+                $selectors = trim($block[1]);
+                $rules     = trim($block[2]);
+
+                $parts = array_map('trim', explode(',', $selectors));
+                $newParts = [];
+
+                foreach ($parts as $sel) {
+
+                    if (preg_match('/\bh([3-6])(\.[a-z0-9\-_\.]+)?\b/i', $sel, $mm)) {
+
+                        $level = $mm[1];
+
+                        $fontSelector = preg_replace(
+                            '/\bh' . $level . '(\.[a-z0-9\-_\.]+)?\b/i',
+                            '.h' . $level . '-font$1',
+                            $sel
+                        );
+
+                        $newParts[] = $fontSelector;
+                    }
+                }
+
+                if (!empty($newParts)) {
+                    $temp .= "    " . implode(', ', $newParts) . " {\n        " . $rules . "\n    }\n\n";
+                }
+            }
+        };
+
+        $inner_processor($inner);
+
+        $out .= $temp . "}\n\n";
+    }
+
+    return $out;
+}
